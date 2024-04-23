@@ -66,13 +66,15 @@ class MuReadout(MegatronModule):
         parallel_output: wether output logits being distributed or not.
     """
 
-    def __init__(self, mpu_vocab_size, parallel_output):
+    def __init__(self, mpu_vocab_size, parallel_output, sequence_parallel=False, gradient_accumulation_fusion=False):
         super(MuReadout, self).__init__()
         self.bias = torch.nn.Parameter(torch.zeros(mpu_vocab_size))
         self.bias.model_parallel = True
         self.bias.partition_dim = 0
         self.bias.stride = 1
         self.parallel_output = parallel_output
+        self.sequence_parallel = sequence_parallel
+        self.gradient_accumulation_fusion = gradient_accumulation_fusion
         self.warn_once = False
 
     def forward(self, hidden_states, word_embeddings_weight):
@@ -89,6 +91,8 @@ class MuReadout(MegatronModule):
             word_embeddings_weight,
             self.parallel_output,
             bias=self.bias,
+            sequence_parallel=self.sequence_parallel,
+            gradient_accumulation_fusion=self.gradient_accumulation_fusion,
             async_tensor_model_parallel_allreduce=async_tensor_model_parallel_allreduce,
         )
         return output

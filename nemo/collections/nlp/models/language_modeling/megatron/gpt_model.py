@@ -18,6 +18,7 @@ import torch
 
 from nemo.collections.nlp.modules.common.megatron.language_model import get_language_model
 from nemo.collections.nlp.modules.common.megatron.module import MegatronModule
+from nemo.collections.nlp.modules.common.megatron.mup.layer import MuReadout
 from nemo.collections.nlp.modules.common.megatron.utils import (
     ApexGuardDefaults,
     init_method_normal,
@@ -61,6 +62,7 @@ def post_language_model_processing(
     return_logits=False,
     sequence_parallel=False,
     gradient_accumulation_fusion=False,
+    mu_readout=None,
 ):
     if get_key_value:
         lm_output, presents = lm_output
@@ -68,17 +70,23 @@ def post_language_model_processing(
     # Output. Format is [s b h]
     if forward_method_parallel_output is not None:
         parallel_output = forward_method_parallel_output
-    async_tensor_model_parallel_allreduce = (
-        parallel_state.get_tensor_model_parallel_world_size() > 1 and not sequence_parallel
-    )
-    output = parallel_lm_logits(
-        lm_output,
-        logit_weights,
-        parallel_output,
-        sequence_parallel=sequence_parallel,
-        gradient_accumulation_fusion=gradient_accumulation_fusion,
-        async_tensor_model_parallel_allreduce=async_tensor_model_parallel_allreduce,
-    )
+    if mu_readout is not None:
+        old_parallel_output = mu_readout.parallel_output
+        mu_readout.parallel_output = parallel_output
+        output = mu_readout(lm_output, logit_weights)
+        mu_readout.parallel_output = old_parallel_output
+    else:
+        async_tensor_model_parallel_allreduce = (
+            parallel_state.get_tensor_model_parallel_world_size() > 1 and not sequence_parallel
+        )
+        output = parallel_lm_logits(
+            lm_output,
+            logit_weights,
+            parallel_output,
+            sequence_parallel=sequence_parallel,
+            gradient_accumulation_fusion=gradient_accumulation_fusion,
+            async_tensor_model_parallel_allreduce=async_tensor_model_parallel_allreduce,
+        )
 
     if get_key_value:
         output = [output, presents]
@@ -167,6 +175,7 @@ class GPTModel(MegatronModule):
         use_flash_attention=False,
         seq_len_interpolation_factor=None,
         rotary_base=10000,
+        shape_file=None,
     ):
         # deprecation warning
         deprecated_warning("GPTModel", "McoreGPTModel")
@@ -252,6 +261,17 @@ class GPTModel(MegatronModule):
             rotary_base=rotary_base,
         )
 
+        if shape_file is not None:
+            mpu_vocab_size = (
+                self.language_model.output_layer.weight
+                if not self.share_embeddings_and_output_weights
+                else self.word_embeddings_weight()
+            ).size(0)
+            self.tokens_head = MuReadout(mpu_vocab_size, self.parallel_output)
+        else:
+            self.tokens_head = None
+        self._tokens_head_key = 'tokens_head'
+
         if self.share_embeddings_and_output_weights:
             self.initialize_word_embeddings(
                 init_method=init_method_normal(init_method_std),
@@ -317,6 +337,7 @@ class GPTModel(MegatronModule):
                 return_logits=encoder_input is not None,
                 sequence_parallel=self.sequence_parallel,
                 gradient_accumulation_fusion=self.config.gradient_accumulation_fusion,
+                mu_readout=self.tokens_head,
             )
             if loss_mask is not None:
                 if isinstance(post_process_result, tuple):
@@ -343,6 +364,10 @@ class GPTModel(MegatronModule):
             state_dict_[self._word_embeddings_for_head_key] = self.word_embeddings.state_dict(
                 destination, prefix, keep_vars
             )
+        if self.tokens_head is None:
+            state_dict_[self._tokens_head_key] = self.tokens_head.state_dict_for_save_checkpoint(
+                destination, prefix, keep_vars
+            )
         return state_dict_
 
     def load_state_dict(self, state_dict, strict=True):
@@ -354,3 +379,5 @@ class GPTModel(MegatronModule):
         if self._language_model_key in state_dict:
             state_dict = state_dict[self._language_model_key]
         self.language_model.load_state_dict(state_dict, strict=strict)
+        if self.tokens_head is None:
+            self.tokens_head.load_state_dict(state_dict[self._tokens_head_key], strict=strict)

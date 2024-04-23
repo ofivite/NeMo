@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import itertools
+import math
 import os
 import queue
 import warnings
@@ -46,6 +47,8 @@ from nemo.collections.nlp.models.language_modeling.megatron.gpt_model import GPT
 from nemo.collections.nlp.models.language_modeling.megatron_base_model import MegatronBaseModel
 from nemo.collections.nlp.modules.common.megatron.build_model import build_model
 from nemo.collections.nlp.modules.common.megatron.module import Float16Module
+from nemo.collections.nlp.modules.common.megatron.mup.init import normal_
+from nemo.collections.nlp.modules.common.megatron.mup.shape import set_base_shapes
 from nemo.collections.nlp.modules.common.megatron.utils import (
     ApexGuardDefaults,
     average_losses_across_data_parallel_group,
@@ -401,6 +404,48 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
         if self.use_loss_mask and self.transformer_config.sequence_parallel:
             raise ValueError('Loss mask is not supported with sequence parallelism.')
 
+        if hasattr(self.cfg, "shape_file"):
+            set_base_shapes(self, self.register_artifact("shape_file", self.cfg.shape_file), rescale_params=False)
+
+            # here manually initialize all the named parameters with the muTranfer normal initializer
+            for name, tensor in self.named_parameters():
+                if name.endswith('.dense_4h_to_h.weight') or name.endswith('.dense.weight'):
+                    # initialize all the output dense matrix weight
+                    # match the megatron lm model
+                    std = self.cfg.init_method_std / math.sqrt(2.0 * 12.0)
+                    normal_(tensor, 0, std)
+                elif name.endswith('layernorm.weight'):
+                    # initialize all the layer norm weight
+                    if tensor.std() != 0 and tensor.mean() != 1:
+                        raise ValueError(f'need to check {name} init')
+                    normal_(tensor, 1, 0)
+                elif name.endswith('.weight'):
+                    # initialize all the other dense matrix weight
+                    normal_(tensor, 0, self.cfg.init_method_std)
+                else:
+                    if tensor.std() != 0 and tensor.mean() != 0:
+                        raise ValueError(f'need to check {name} init')
+
+            # here manually overwrite the norm factor
+            # note, has to turn off the model.apply_query_key_layer_scaling
+            assert not self.cfg.apply_query_key_layer_scaling
+            for name, layer in self.named_modules():
+                if (
+                    name.endswith('.self_attention')
+                    or name.endswith('.inter_attention')
+                    or name.endswith('.cross_attention')
+                    or name.endswith('.core_attention')
+                ):
+                    if hasattr(layer, 'norm_factor') and hasattr(layer, 'hidden_size_per_attention_head'):
+                        layer.norm_factor = (
+                            layer.hidden_size_per_attention_head / 8.0
+                        )  # divide 8 to make it consist with ADLR setting
+                else:
+                    if hasattr(layer, 'norm_factor') or hasattr(layer, 'hidden_size_per_attention_head'):
+                        logging.error(
+                            f'module {name} has norm factor but its name is not ending with attention, need to double check'
+                        )
+
     def set_inference_config(self, inference_config):
         self._inference_config = inference_config
 
@@ -498,6 +543,7 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
                 megatron_legacy=self.cfg.get('megatron_legacy', False),
                 seq_len_interpolation_factor=self.cfg.get('seq_len_interpolation_factor', None),
                 rotary_base=self.cfg.get('rotary_base', 10000),
+                shape_file=self.cfg.get('shape_file', None),
             )
             if self.cfg.get("apply_embedding_scaling", False) and parallel_state.is_pipeline_first_stage():
                 extend_instance(model.language_model.embedding, EmbeddingScalingMixin)

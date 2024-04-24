@@ -42,10 +42,6 @@ def main(cfg) -> None:
     trainer = MegatronTrainerBuilder(cfg).create_trainer()
     exp_manager(trainer, cfg.exp_manager)
 
-    with open_dict(cfg):
-        shape_savefile = cfg.model.shape_file.format(rank=torch.distributed.get_rank())
-        cfg.model.shape_file = shape_savefile
-
     model = MegatronGPTModel(cfg.model, trainer)
 
     trainer.fit(model)

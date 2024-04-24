@@ -44,6 +44,7 @@ def main(cfg) -> None:
     trainer = MegatronTrainerBuilder(cfg).create_trainer()
     exp_manager(trainer, cfg.exp_manager)
 
+    trainer.strategy.setup_environment()
     model = MegatronGPTModel(cfg.model, trainer)
 
     trainer.fit(model)

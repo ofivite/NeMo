@@ -384,7 +384,7 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
         if self.use_loss_mask and self.transformer_config.sequence_parallel:
             raise ValueError('Loss mask is not supported with sequence parallelism.')
 
-        if hasattr(self.cfg, "shape_file"):
+        if hasattr(self.cfg, "shape_file") and self.cfg.shape_file is not None:
             set_base_shapes(self, self.register_artifact("shape_file", self.cfg.shape_file), rescale_params=False)
 
             # here manually initialize all the named parameters with the muTranfer normal initializer

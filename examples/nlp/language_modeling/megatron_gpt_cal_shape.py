@@ -28,6 +28,8 @@ torch._dynamo.config.suppress_errors = True
 
 mp.set_start_method("spawn", force=True)
 
+OmegaConf.register_new_resolver("rank", torch.distributed.get_rank)
+
 
 @hydra_runner(config_path="conf", config_name="megatron_gpt_config")
 def main(cfg) -> None:

@@ -41,6 +41,9 @@ def main(cfg) -> None:
         cfg.base_model.precision = cfg.trainer.precision
         cfg.delta_model.precision = cfg.trainer.precision
 
+        shape_savefile = cfg.model.shape_file.format(rank=torch.distributed.get_rank())
+        cfg.model.shape_file = shape_savefile
+
     base_model = MegatronGPTModel(cfg.base_model, trainer)
     delta_model = MegatronGPTModel(cfg.delta_model, trainer)
     make_base_shapes(base_model, delta_model, savefile=cfg.model.shape_file)

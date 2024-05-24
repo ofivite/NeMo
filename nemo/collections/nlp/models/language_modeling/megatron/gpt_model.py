@@ -174,7 +174,7 @@ class GPTModel(MegatronModule):
         use_flash_attention=False,
         seq_len_interpolation_factor=None,
         rotary_base=10000,
-        shape_file=None,
+        make_mup=False,
     ):
         super(GPTModel, self).__init__(config=config, share_token_embeddings=share_embeddings_and_output_weights)
 
@@ -257,13 +257,13 @@ class GPTModel(MegatronModule):
             rotary_base=rotary_base,
         )
 
-        if shape_file is not None:
+        if make_mup:
             mpu_vocab_size = (
                 self.language_model.output_layer.weight
                 if not self.share_embeddings_and_output_weights
                 else self.word_embeddings_weight()
             ).size(0)
-            self.tokens_head = MuReadout(mpu_vocab_size, self.parallel_output)
+            self.tokens_head = MuReadout(mpu_vocab_size, self.parallel_output, bias=False)
         else:
             self.tokens_head = None
         self._tokens_head_key = 'tokens_head'
@@ -356,7 +356,7 @@ class GPTModel(MegatronModule):
             state_dict_[self._word_embeddings_for_head_key] = self.word_embeddings.state_dict(
                 destination, prefix, keep_vars
             )
-        if self.tokens_head is None:
+        if self.tokens_head is not None:
             state_dict_[self._tokens_head_key] = self.tokens_head.state_dict_for_save_checkpoint(
                 destination, prefix, keep_vars
             )
@@ -371,5 +371,5 @@ class GPTModel(MegatronModule):
         if self._language_model_key in state_dict:
             state_dict = state_dict[self._language_model_key]
         self.language_model.load_state_dict(state_dict, strict=strict)
-        if self.tokens_head is None:
+        if self.tokens_head is not None:
             self.tokens_head.load_state_dict(state_dict[self._tokens_head_key], strict=strict)

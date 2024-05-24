@@ -75,22 +75,27 @@ def process_param_groups(params, **kwargs):
     return param_groups
 
 
-def MuAdam(params, impl=Adam, decoupled_wd=True, **kwargs):
-    '''Adam with μP scaling.
+def process_mup_param_groups(optim_name, params, decoupled_wd=None, **kwargs):
+    if optim_name in [
+            'adam',
+            'adamw',
+            'fused_adam',
+            'distributed_fused_adam',
+            'megatron_fused_adam',
+    ]:
+        if decoupled_wd is None:
+            decoupled_wd = True
+        param_groups = process_adam_param_groups(params, decoupled_wd=decoupled_wd, **kwargs)
+    elif optim_name == 'sgd':
+        if decoupled_wd is None:
+            decoupled_wd = False
+        param_groups = process_sgd_param_groups(params, decoupled_wd=decoupled_wd, **kwargs)
+    else:
+        raise ValueError(f'optimizer {optim_name} has not been implemented into muP yet')
+    return param_groups
 
-    Note for this to work properly, your model needs to have its base shapes set
-    already using `mup.set_base_shapes`.
-    
-    Inputs:
-        impl: the specific Adam-like optimizer implementation from torch.optim or
-            elsewhere 
-        decoupled_wd: if True, skips the mup scaling for weight decay, which should
-            be used for optimizer implementations that decouple weight decay from
-            learning rate. See https://github.com/microsoft/mup/issues/1 for a use case.
-    Outputs:
-        An instance of `impl` with refined parameter groups, each of which has the correctly
-        scaled learning rate according to mup.
-    '''
+
+def process_adam_param_groups(params, decoupled_wd=True, **kwargs):
     new_param_groups = []
     for param_group in process_param_groups(params, **kwargs):
         # For every existing param group, we split into several new groups
@@ -120,34 +125,10 @@ def MuAdam(params, impl=Adam, decoupled_wd=True, **kwargs):
             if not decoupled_wd:
                 group['weight_decay'] *= width_mult
         new_param_groups.extend(list(matrix_like_p.values()) + [vector_like_p])
-    return impl(new_param_groups, **kwargs)
+    return new_param_groups
 
 
-def MuAdamW(params, **kwargs):
-    '''AdamW with μP scaling.
-
-    Note for this to work properly, your model needs to have its base shapes set
-    already using `mup.set_base_shapes`.
-    '''
-    return MuAdam(params, impl=AdamW, **kwargs)
-
-
-def MuSGD(params, impl=SGD, decoupled_wd=False, **kwargs):
-    '''SGD with μP scaling.
-
-    Note for this to work properly, your model needs to have its base shapes set
-    already using `mup.set_base_shapes`.
-     
-    Inputs:
-        impl: the specific SGD-like optimizer implementation from torch.optim or
-            elsewhere 
-        decoupled_wd: if True, skips the mup scaling for weight decay, which should
-            be used for optimizer implementations that decouple weight decay from
-            learning rate. See https://github.com/microsoft/mup/issues/1 for a use case.
-    Outputs:
-        An instance of `impl` with refined parameter groups, each of which has the correctly
-        scaled learning rate according to mup.
-    '''
+def process_sgd_param_groups(params, decoupled_wd=True, **kwargs):
     new_param_groups = []
     for param_group in process_param_groups(params, **kwargs):
         # For every existing param group, we split into several new groups
@@ -184,4 +165,53 @@ def MuSGD(params, impl=SGD, decoupled_wd=False, **kwargs):
             if not decoupled_wd:
                 group['weight_decay'] *= shape_ratio
         new_param_groups.extend(list(matrix_like_p.values()) + list(vector_like_p.values()) + [fixed_p])
+    return new_param_groups
+
+
+def MuAdam(params, impl=Adam, decoupled_wd=True, **kwargs):
+    '''Adam with μP scaling.
+
+    Note for this to work properly, your model needs to have its base shapes set
+    already using `mup.set_base_shapes`.
+
+    Inputs:
+        impl: the specific Adam-like optimizer implementation from torch.optim or
+            elsewhere
+        decoupled_wd: if True, skips the mup scaling for weight decay, which should
+            be used for optimizer implementations that decouple weight decay from
+            learning rate. See https://github.com/microsoft/mup/issues/1 for a use case.
+    Outputs:
+        An instance of `impl` with refined parameter groups, each of which has the correctly
+        scaled learning rate according to mup.
+    '''
+    new_param_groups = process_adam_param_groups(params, decoupled_wd=decoupled_wd, **kwargs)
+    return impl(new_param_groups, **kwargs)
+
+
+def MuAdamW(params, **kwargs):
+    '''AdamW with μP scaling.
+
+    Note for this to work properly, your model needs to have its base shapes set
+    already using `mup.set_base_shapes`.
+    '''
+    return MuAdam(params, impl=AdamW, **kwargs)
+
+
+def MuSGD(params, impl=SGD, decoupled_wd=False, **kwargs):
+    '''SGD with μP scaling.
+
+    Note for this to work properly, your model needs to have its base shapes set
+    already using `mup.set_base_shapes`.
+
+    Inputs:
+        impl: the specific SGD-like optimizer implementation from torch.optim or
+            elsewhere
+        decoupled_wd: if True, skips the mup scaling for weight decay, which should
+            be used for optimizer implementations that decouple weight decay from
+            learning rate. See https://github.com/microsoft/mup/issues/1 for a use case.
+    Outputs:
+        An instance of `impl` with refined parameter groups, each of which has the correctly
+        scaled learning rate according to mup.
+    '''
+    new_param_groups = process_sgd_param_groups(params, decoupled_wd=decoupled_wd, **kwargs)
     return impl(new_param_groups, **kwargs)

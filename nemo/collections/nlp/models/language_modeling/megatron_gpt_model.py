@@ -48,6 +48,8 @@ from nemo.collections.nlp.models.language_modeling.megatron_base_model import Me
 from nemo.collections.nlp.modules.common.megatron.build_model import build_model
 from nemo.collections.nlp.modules.common.megatron.module import Float16Module
 from nemo.collections.nlp.modules.common.megatron.mup.init import normal_
+from nemo.collections.nlp.modules.common.megatron.mup.layer import patch_mcore_gptmodel_for_mup
+from nemo.collections.nlp.modules.common.megatron.mup.optim import process_mup_param_groups
 from nemo.collections.nlp.modules.common.megatron.mup.shape import set_base_shapes
 from nemo.collections.nlp.modules.common.megatron.utils import (
     ApexGuardDefaults,
@@ -384,24 +386,90 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
         if self.use_loss_mask and self.transformer_config.sequence_parallel:
             raise ValueError('Loss mask is not supported with sequence parallelism.')
 
-        if hasattr(self.cfg, "shape_file") and self.cfg.shape_file is not None:
+        if self.cfg.get('make_mup', False) and self.mcore_gpt:
+            patch_mcore_gptmodel_for_mup(self.model)
+
+        if self.cfg.get('make_mup', False) and hasattr(self.cfg, "shape_file"):
             set_base_shapes(self, self.register_artifact("shape_file", self.cfg.shape_file), rescale_params=False)
 
             # here manually initialize all the named parameters with the muTranfer normal initializer
             for name, tensor in self.named_parameters():
-                if name.endswith('.dense_4h_to_h.weight') or name.endswith('.dense.weight'):
+                # MLP output, no NVTE: .dense_4h_to_h.weight
+                # Attention output, no NVTE: .dense.weight
+                # MLP output, NVTE: .fc2_weight
+                # Attention output, NVTE: .proj.weight
+                # MLP output, MCore: .linear_fc2.weight
+                # Attention output, MCore: .linear_proj.weight
+                if (
+                        name.endswith('.dense_4h_to_h.weight')
+                        or name.endswith('.dense.weight')
+                        or name.endswith('.fc2_weight')
+                        or name.endswith('.proj.weight')
+                        or name.endswith('.linear_fc2.weight')
+                        or name.endswith('.linear_proj.weight')
+                ):
                     # initialize all the output dense matrix weight
                     # match the megatron lm model
-                    std = self.cfg.init_method_std / math.sqrt(2.0 * 12.0)
+                    std = self.cfg.init_method_std
+                    if self.cfg.get('use_scaled_init_method', True):
+                        std = std / math.sqrt(2.0 * self.cfg.num_layers)
+                    # Previous version
+                    # std = self.cfg.init_method_std / math.sqrt(2.0 * 12.0)
                     normal_(tensor, 0, std)
-                elif name.endswith('layernorm.weight'):
+                # LayerNorm weight: layernorm.weight
+                # (Switch)MLP LayerNorm weight, no NVTE: .normalization.weight
+                # NormFormer LayerNorm weight, no NVTE: normformer_norm.weight
+                # QKV/MLP LayerNorm weight, NVTE: .layer_norm_weight
+                # LayerNorm weight, MCore: layernorm.weight
+                elif (
+                        name.endswith('layernorm.weight')
+                        or name.endswith('.normalization.weight')
+                        or name.endswith('normformer_norm.weight')
+                        or name.endswith('.layer_norm_weight')
+                ):
                     # initialize all the layer norm weight
                     if tensor.std() != 0 and tensor.mean() != 1:
                         raise ValueError(f'need to check {name} init')
                     normal_(tensor, 1, 0)
-                elif name.endswith('.weight'):
+                # Linear weight: .weight
+                # MLP weight, NVTE: .fc1_weight
+                # QKV weights, NVTE: .query_weight, .key_weight, .value_weight
+                # MLP weight, MCore: .linear_fc1.weight
+                # QKV weight, MCore: .linear_qkv.weight
+                elif (
+                        name.endswith('.weight')
+                        or name.endswith('.fc1_weight')
+                        or name.endswith('.query_weight')
+                        or name.endswith('.key_weight')
+                        or name.endswith('.value_weight')
+                        or name.endswith('.linear_fc1.weight')
+                        or name.endswith('.linear_qkv.weight')
+                ):
                     # initialize all the other dense matrix weight
                     normal_(tensor, 0, self.cfg.init_method_std)
+                    if self.cfg.get('mup_query_zero_init', False):
+                        kv_channels = self.cfg.get('kv_channels', None)
+                        hidden_size = self.cfg.hidden_size
+                        num_attention_heads = self.cfg.num_attention_heads
+                        if kv_channels is None:
+                            assert (
+                                hidden_size % num_attention_heads == 0
+                            ), 'hidden_size must be divisible by num_attention_heads if kv_channels is None'
+                            kv_channels = hidden_size // num_attention_heads
+
+                        query_projection_size = kv_channels * num_attention_heads
+
+                        if name.endswith('.query_key_value.weight') or name.endswith('.linear_qkv.weight'):
+                            tensor.data[:query_projection_size, :] = 0
+                        elif name.endswith('.query.weight') or name.endswith('.query_weight') or name.endswith('.query_layer.weight'):
+                            tensor.data.zero_()
+                    if self.cfg.get('mup_readout_zero_init', False):
+                        # We do not zero shared embeddings.
+                        if self.mcore_gpt and name.endswith('.output_layer.weight'):
+                            tensor.data.zero_()
+                        elif name.endswith('.language_model.output_layer.weight'):
+                            tensor.data.zero_()
+                # TODO .head_scale_tensor anywhere?
                 else:
                     if tensor.std() != 0 and tensor.mean() != 0:
                         raise ValueError(f'need to check {name} init')
@@ -417,14 +485,47 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
                     or name.endswith('.core_attention')
                 ):
                     if hasattr(layer, 'norm_factor') and hasattr(layer, 'hidden_size_per_attention_head'):
-                        layer.norm_factor = (
-                            layer.hidden_size_per_attention_head / 8.0
-                        )  # divide 8 to make it consist with ADLR setting
+                        layer.norm_factor = layer.hidden_size_per_attention_head
+                        # Previous version
+                        # layer.norm_factor = (
+                        #     layer.hidden_size_per_attention_head / 8.0
+                        # )  # divide 8 to make it consist with ADLR setting
+                    elif hasattr(layer, 'hidden_size_per_attention_head'):
+                        for sublayer_name in ['flash_attention', 'fused_attention', 'unfused_attention']:
+                            if hasattr(layer, sublayer_name):
+                                sublayer = getattr(layer, sublayer_name)
+                                if hasattr(sublayer, 'norm_factor'):
+                                    sublayer.norm_factor = layer.hidden_size_per_attention_head
+                                    # Previous version
+                                    # sublayer.norm_factor = (
+                                    #     layer.hidden_size_per_attention_head / 8.0
+                                    # )  # divide 8 to make it consist with ADLR setting
+                elif (
+                    name.endswith('.flash_attention')
+                    or name.endswith('.fused_attention')
+                    or name.endswith('.unfused_attention')
+                ):
+                    # These are handled in the else-block above.
+                    pass
                 else:
                     if hasattr(layer, 'norm_factor') or hasattr(layer, 'hidden_size_per_attention_head'):
                         logging.error(
                             f'module {name} has norm factor but its name is not ending with attention, need to double check'
                         )
+
+            # Manually set `MuReadout` infshape for FSDP support.
+            if self.mcore_gpt:
+                self.model.output_layer.weight_infshape = (
+                    self.model.output_layer.weight
+                    if not self.model.share_embeddings_and_output_weights
+                    else self.model.shared_embedding_or_output_weight()
+                ).infshape
+            else:
+                self.model.tokens_head.weight_infshape = (
+                    self.model.language_model.output_layer.weight
+                    if not self.model.share_embeddings_and_output_weights
+                    else self.model.word_embeddings_weight()
+                ).infshape
 
     def set_inference_config(self, inference_config):
         self._inference_config = inference_config
@@ -523,7 +624,7 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
                 megatron_legacy=self.cfg.get('megatron_legacy', False),
                 seq_len_interpolation_factor=self.cfg.get('seq_len_interpolation_factor', None),
                 rotary_base=self.cfg.get('rotary_base', 10000),
-                shape_file=self.cfg.get('shape_file', None),
+                make_mup=self.cfg.get('make_mup', False),
             )
             if self.cfg.get("apply_embedding_scaling", False) and parallel_state.is_pipeline_first_stage():
                 extend_instance(model.language_model.embedding, EmbeddingScalingMixin)
@@ -539,6 +640,16 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
 
         else:
             self._optimizer_param_groups = get_params_for_weight_decay_optimization(self.model)
+
+        if self.cfg.get('make_mup', False) and hasattr(self.cfg, 'shape_file'):
+            # muP parameter group processing
+            optim_name = self.cfg.optim.get('name', 'fused_adam')
+            self._optimizer_param_groups = process_mup_param_groups(
+                optim_name,
+                self._optimizer_param_groups,
+                lr=self.cfg.optim.lr,
+                weight_decay=self.cfg.optim.get('weight_decay', 0.0),
+            )
 
     def configure_optimizers(self):
 

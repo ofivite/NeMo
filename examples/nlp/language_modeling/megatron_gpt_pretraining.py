@@ -19,11 +19,8 @@ import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf, open_dict
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
-from nemo.collections.nlp.modules.common.megatron.mup.optim import MuAdam, MuAdamW
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
 from nemo.core.config import hydra_runner
-from nemo.core.config.optimizers import AdamParams, AdamWParams
-from nemo.core.optim.optimizers import register_optimizer
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 
@@ -31,20 +28,15 @@ torch._dynamo.config.suppress_errors = True
 
 mp.set_start_method("spawn", force=True)
 
-OmegaConf.register_new_resolver("rank", torch.distributed.get_rank)
-
 
 @hydra_runner(config_path="conf", config_name="megatron_gpt_config")
 def main(cfg) -> None:
-    register_optimizer("muadamw", MuAdamW, AdamWParams())
-    register_optimizer("muadam", MuAdam, AdamParams())
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f'\n{OmegaConf.to_yaml(cfg)}')
 
     trainer = MegatronTrainerBuilder(cfg).create_trainer()
     exp_manager(trainer, cfg.exp_manager)
 
-    trainer.strategy.setup_environment()
     model = MegatronGPTModel(cfg.model, trainer)
 
     trainer.fit(model)

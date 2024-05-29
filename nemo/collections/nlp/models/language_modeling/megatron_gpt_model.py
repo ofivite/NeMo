@@ -406,6 +406,9 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
         if self.use_loss_mask and self.transformer_config.sequence_parallel:
             raise ValueError('Loss mask is not supported with sequence parallelism.')
 
+        if self.cfg.get('make_mup', False) and self.use_fsdp and not self.cfg.get('fsdp_use_orig_params', False):
+            raise ValueError('To use μP, it is required to set `model.fsdp_use_orig_params=True`.')
+
         if self.cfg.get('make_mup', False) and self.mcore_gpt:
             patch_mcore_gptmodel_for_mup(self.model)
 

@@ -500,6 +500,7 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
             # here manually overwrite the norm factor
             # note, has to turn off the model.apply_query_key_layer_scaling
             assert not self.cfg.apply_query_key_layer_scaling
+            attn_norm_head_divisor = math.sqrt(self.cfg.get('mup_base_model_head_width', 1))
             for name, layer in self.named_modules():
                 if (
                     name.endswith('.self_attention')
@@ -508,7 +509,7 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
                     or name.endswith('.core_attention')
                 ):
                     if hasattr(layer, 'norm_factor') and hasattr(layer, 'hidden_size_per_attention_head'):
-                        layer.norm_factor = layer.hidden_size_per_attention_head
+                        layer.norm_factor = layer.hidden_size_per_attention_head / attn_norm_head_divisor
                         # Previous version
                         # layer.norm_factor = (
                         #     layer.hidden_size_per_attention_head / 8.0
@@ -518,7 +519,8 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
                             if hasattr(layer, sublayer_name):
                                 sublayer = getattr(layer, sublayer_name)
                                 if hasattr(sublayer, 'norm_factor'):
-                                    sublayer.norm_factor = layer.hidden_size_per_attention_head
+                                    sublayer.norm_factor = \
+                                        layer.hidden_size_per_attention_head / attn_norm_head_divisor
                                     # Previous version
                                     # sublayer.norm_factor = (
                                     #     layer.hidden_size_per_attention_head / 8.0

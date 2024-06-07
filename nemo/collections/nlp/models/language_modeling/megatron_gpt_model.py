@@ -498,9 +498,17 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
                         raise ValueError(f'need to check {name} init')
 
             # here manually overwrite the norm factor
+            # Previous version
             # note, has to turn off the model.apply_query_key_layer_scaling
-            assert not self.cfg.apply_query_key_layer_scaling
+            # assert not self.cfg.apply_query_key_layer_scaling
+            apply_query_key_layer_scaling = self.cfg.get('apply_query_key_layer_scaling', False)
+            fp16_enabled = self.trainer.precision in [16, '16', '16-mixed']
+            if self.mcore_gpt and not fp16_enabled:
+                # The option is automatically turned off in this case, so we should not handle it here.
+                apply_query_key_layer_scaling = False
+
             attn_norm_head_divisor = math.sqrt(self.cfg.get('mup_base_model_head_width', 1))
+
             for name, layer in self.named_modules():
                 if (
                     name.endswith('.self_attention')
@@ -509,7 +517,11 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
                     or name.endswith('.core_attention')
                 ):
                     if hasattr(layer, 'norm_factor') and hasattr(layer, 'hidden_size_per_attention_head'):
-                        layer.norm_factor = layer.hidden_size_per_attention_head / attn_norm_head_divisor
+                        if apply_query_key_layer_scaling and hasattr(layer, 'layer_number'):
+                            extra_factor = layer.layer_number
+                        else:
+                            extra_factor = 1.0
+                        layer.norm_factor = layer.hidden_size_per_attention_head / attn_norm_head_divisor * extra_factor
                         # Previous version
                         # layer.norm_factor = (
                         #     layer.hidden_size_per_attention_head / 8.0
@@ -519,8 +531,15 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
                             if hasattr(layer, sublayer_name):
                                 sublayer = getattr(layer, sublayer_name)
                                 if hasattr(sublayer, 'norm_factor'):
-                                    sublayer.norm_factor = \
-                                        layer.hidden_size_per_attention_head / attn_norm_head_divisor
+                                    if apply_query_key_layer_scaling and hasattr(sublayer, 'layer_number'):
+                                        extra_factor = sublayer.layer_number
+                                    else:
+                                        extra_factor = 1.0
+                                    sublayer.norm_factor = (
+                                        layer.hidden_size_per_attention_head
+                                        / attn_norm_head_divisor
+                                        * extra_factor
+                                    )
                                     # Previous version
                                     # sublayer.norm_factor = (
                                     #     layer.hidden_size_per_attention_head / 8.0
@@ -596,7 +615,7 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
                 max_position_embeddings=self.cfg.max_position_embeddings,
                 num_layers=self.cfg.num_layers,
                 num_attention_heads=self.cfg.num_attention_heads,
-                apply_query_key_layer_scaling=self.cfg.get('apply_query_key_layer_scaling', True),
+                apply_query_key_layer_scaling=self.cfg.get('apply_query_key_layer_scaling', True) if not self.cfg.get('make_mup', False) else False,
                 kv_channels=self.cfg.get('kv_channels', None),
                 ffn_hidden_size=self.cfg.ffn_hidden_size,
                 num_tokentypes=0,
@@ -2214,5 +2233,9 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
         mcore_customization_config_dict = self.cfg.get('mcore_customization_config', {})
         for key, value in mcore_customization_config_dict.items():
             setattr(transformer_config, key, value)
+
+        # Unset query key layer scaling when using μP, because we manually fix up the norm factors.
+        if transformer_config.apply_query_key_layer_scaling and self.cfg.get('make_mup', True):
+            transformer_config.apply_query_key_layer_scaling = False
 
         return transformer_config

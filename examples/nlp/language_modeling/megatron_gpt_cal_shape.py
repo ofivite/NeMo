@@ -55,10 +55,11 @@ def main(cfg) -> None:
 
     trainer = MegatronTrainerBuilder(cfg).create_trainer()
 
-    cfg.base_model = cfg.model.copy()
-    del cfg.base_model.shape_file
-    cfg.delta_model = cfg.model.copy()
-    del cfg.delta_model.shape_file
+    with open_dict(cfg):
+        cfg.base_model = cfg.model.copy()
+        del cfg.base_model.shape_file
+        cfg.delta_model = cfg.model.copy()
+        del cfg.delta_model.shape_file
     # Just to make sure the configs were actually deep-copied.
     assert cfg.model.get('shape_file', None), \
         'configs were not deep-copied; the OmegaConf copying code needs an update.'

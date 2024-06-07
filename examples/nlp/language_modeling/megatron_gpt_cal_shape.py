@@ -19,7 +19,7 @@ import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf, open_dict
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
-from nemo.collections.nlp.modules.common.megatron.mup.shape import make_base_shapes
+from nemo.collections.nlp.modules.common.megatron.mup.shape import append_base_head_widths, make_base_shapes
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
@@ -97,6 +97,12 @@ def main(cfg) -> None:
     base_model = MegatronGPTModel(cfg.base_model, trainer)
     delta_model = MegatronGPTModel(cfg.delta_model, trainer)
     make_base_shapes(base_model, delta_model, savefile=cfg.model.shape_file)
+
+    append_base_head_widths(
+        cfg.model.shape_file,
+        base_model,
+        ['.self_attention', '.inter_attention', '.cross_attention', '.core_attention'],
+    )
 
 
 if __name__ == '__main__':

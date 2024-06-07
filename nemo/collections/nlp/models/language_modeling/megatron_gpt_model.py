@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import collections
 import itertools
 import math
 import os
@@ -50,7 +51,7 @@ from nemo.collections.nlp.modules.common.megatron.module import Float16Module
 from nemo.collections.nlp.modules.common.megatron.mup.init import normal_
 from nemo.collections.nlp.modules.common.megatron.mup.layer import patch_mcore_gptmodel_for_mup
 from nemo.collections.nlp.modules.common.megatron.mup.optim import process_mup_param_groups
-from nemo.collections.nlp.modules.common.megatron.mup.shape import set_base_shapes
+from nemo.collections.nlp.modules.common.megatron.mup.shape import load_base_head_widths, set_base_shapes
 from nemo.collections.nlp.modules.common.megatron.utils import (
     ApexGuardDefaults,
     average_losses_across_data_parallel_group,
@@ -487,7 +488,20 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
                 # The option is automatically turned off in this case, so we should not handle it here.
                 apply_query_key_layer_scaling = False
 
-            attn_norm_head_divisor = math.sqrt(self.cfg.get('mup_base_model_head_width', 1))
+            base_head_widths = load_base_head_widths(self.cfg.shape_file)
+            # The user specified a custom value.
+            if self.cfg.get('mup_base_model_head_width', None) is not None:
+                base_head_width = self.cfg.mup_base_model_head_width
+                assert isinstance(base_head_width, int), 'manually specified base model head width can only be single integer'
+                attn_norm_head_divisor = math.sqrt(base_head_width)
+                attn_norm_head_divisors = collections.defaultdict(lambda: attn_norm_head_divisor)
+            elif not base_head_widths:
+                # Use 8 as default, meaning a base head width of 64 is assumed.
+                attn_norm_head_divisor = 8.0
+                attn_norm_head_divisors = collections.defaultdict(lambda: attn_norm_head_divisor)
+            else:
+                # Here we don't use a `defaultdict` so that we get errors for missing values.
+                attn_norm_head_divisors = base_head_widths
 
             for name, layer in self.named_modules():
                 if (
@@ -501,7 +515,7 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
                             extra_factor = layer.layer_number
                         else:
                             extra_factor = 1.0
-                        layer.norm_factor = layer.hidden_size_per_attention_head / attn_norm_head_divisor * extra_factor
+                        layer.norm_factor = layer.hidden_size_per_attention_head / attn_norm_head_divisors[name] * extra_factor
                         # Previous version
                         # layer.norm_factor = (
                         #     layer.hidden_size_per_attention_head / 8.0
@@ -517,7 +531,7 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
                                         extra_factor = 1.0
                                     sublayer.norm_factor = (
                                         layer.hidden_size_per_attention_head
-                                        / attn_norm_head_divisor
+                                        / attn_norm_head_divisors[name]
                                         * extra_factor
                                     )
                                     # Previous version

@@ -39,6 +39,7 @@
 # https://github.com/microsoft/mup
 
 from copy import deepcopy
+from typing import List
 
 import yaml
 from torch import nn
@@ -53,6 +54,11 @@ __BSH_COMMENT__ = '''\
 # - `null` indicates a dimension is "finite", i.e. a non-"width" dimension
 # - a number indicates the base dimension of an "infinite" dimension, i.e. some notion of "width"
 '''
+
+__BSHW_START__ = '# <base head widths start>\n'
+assert __BSHW_START__[-1] == '\n'
+__BSHW_END__ = '# <base head widths end>\n'
+assert __BSHW_END__[-1] == '\n'
 
 
 def get_shapes(model):
@@ -251,3 +257,46 @@ def assert_hidden_size_inf(model):
                     f'{name} has infinite fan-in and finite fan-out dimensions but is not type `MuReadout`. '
                     'To resolve this, either change the module to `MuReadout` or change the fan-out to an infinite dimension.'
                 )
+
+
+def append_base_head_widths(path: str, base_model: nn.Module, module_selector_suffixes: List[str]):
+    """Append the head width of each appropriate layer in the base model
+    to the file at the given path.
+    """
+    base_head_widths = {}
+    for (name, layer) in base_model.named_modules():
+        if any(
+                name.endswith(suffix)
+                for suffix in module_selector_suffixes
+        ):
+            base_head_widths[name] = layer.hidden_size_per_attention_head
+
+    if base_head_widths:
+        with open(path, 'a') as f:
+            f.write(__BSHW_START__)
+            for (name, head_width) in base_head_widths.items():
+                f.write(f'# {name}: {head_width}\n')
+            f.write(__BSHW_END__)
+
+
+def load_base_head_widths(path: str):
+    """Append the head width of each appropriate layer in the base model
+    to the file at the given path.
+    """
+    base_head_widths = {}
+    with open(path, 'r') as f:
+        # skip ahead to base head widths
+        for line in f:
+            if line == __BSHW_START__:
+                break
+        else:
+            base_head_widths = None
+
+        for line in f:
+            if line == __BSHW_END__:
+                break
+            # remove '# ' at start and '\n' at end by slicing
+            name, head_width = line[2:-1].rsplit(': ', 1)
+            base_head_widths[name] = int(head_width)
+
+    return base_head_widths

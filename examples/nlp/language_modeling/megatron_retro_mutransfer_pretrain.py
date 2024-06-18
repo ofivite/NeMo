@@ -19,7 +19,6 @@ from pytorch_lightning.plugins.precision import MixedPrecisionPlugin
 from pytorch_lightning.trainer.connectors.checkpoint_connector import _CheckpointConnector
 
 from nemo.collections.nlp.models.language_modeling.megatron_retrieval_model import MegatronRetrievalModel
-from nemo.collections.nlp.modules.common.megatron.mup.optim import MuAdam, MuAdamW
 from nemo.collections.nlp.parts.nlp_overrides import (
     CustomProgressBar,
     GradScaler,
@@ -27,16 +26,12 @@ from nemo.collections.nlp.parts.nlp_overrides import (
     NLPDDPStrategy,
 )
 from nemo.core.config import hydra_runner
-from nemo.core.config.optimizers import AdamParams, AdamWParams
-from nemo.core.optim.optimizers import register_optimizer
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 
 
 @hydra_runner(config_path="conf", config_name="megatron_retro_mutransfer")
 def main(cfg) -> None:
-    register_optimizer("muadamw", MuAdamW, AdamWParams())
-    register_optimizer("muadam", MuAdam, AdamParams())
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f'\n{OmegaConf.to_yaml(cfg)}')
 

@@ -29,8 +29,8 @@ from nemo.collections.nlp.data.language_modeling.megatron.retro_dataset_legacy i
 )
 from nemo.collections.nlp.models.language_modeling.megatron_base_model import MegatronBaseModel
 from nemo.collections.nlp.modules.common.megatron.module import Float16Module
-from nemo.collections.nlp.modules.common.megatron.mup.init import normal_
-from nemo.collections.nlp.modules.common.megatron.mup.shape import set_base_shapes
+from nemo.collections.nlp.modules.common.megatron.mup.convert import maybe_mup_init
+from nemo.collections.nlp.modules.common.megatron.mup.optim import process_mup_param_groups
 from nemo.collections.nlp.modules.common.megatron.retrieval_token_level_encoder_decoder import (
     MegatronRetrievalTokenLevelEncoderDecoderModule,
 )
@@ -102,47 +102,7 @@ class MegatronRetrievalModel(MegatronBaseModel, TextGeneration):
             True if (not self.megatron_amp_O2) and (self.autocast_dtype in [torch.float16, torch.bfloat16]) else False
         )
 
-        if hasattr(self.cfg, "shape_file"):
-            set_base_shapes(self, self.register_artifact("shape_file", self.cfg.shape_file), rescale_params=False)
-
-            # here manually initialize all the named parameters with the muTranfer normal initializer
-            for name, tensor in self.named_parameters():
-                if name.endswith('.dense_4h_to_h.weight') or name.endswith('.dense.weight'):
-                    # initialize all the output dense matrix weight
-                    # match the megatron lm model
-                    std = self.cfg.init_method_std / math.sqrt(2.0 * 12.0)
-                    normal_(tensor, 0, std)
-                elif name.endswith('layernorm.weight'):
-                    # initialize all the layer norm weight
-                    if tensor.std() != 0 and tensor.mean() != 1:
-                        raise ValueError(f'need to check {name} init')
-                    normal_(tensor, 1, 0)
-                elif name.endswith('.weight'):
-                    # initialize all the other dense matrix weight
-                    normal_(tensor, 0, self.cfg.init_method_std)
-                else:
-                    if tensor.std() != 0 and tensor.mean() != 0:
-                        raise ValueError(f'need to check {name} init')
-
-            # here manually overwrite the norm factor
-            # note, has to turn off the model.apply_query_key_layer_scaling
-            assert not self.cfg.apply_query_key_layer_scaling
-            for name, layer in self.named_modules():
-                if (
-                    name.endswith('.self_attention')
-                    or name.endswith('.inter_attention')
-                    or name.endswith('.cross_attention')
-                    or name.endswith('.core_attention')
-                ):
-                    if hasattr(layer, 'norm_factor') and hasattr(layer, 'hidden_size_per_attention_head'):
-                        layer.norm_factor = (
-                            layer.hidden_size_per_attention_head / 8.0
-                        )  # divide 8 to make it consist with ADLR setting
-                else:
-                    if hasattr(layer, 'norm_factor') or hasattr(layer, 'hidden_size_per_attention_head'):
-                        logging.error(
-                            f'module {name} has norm factor but its name is not ending with attention, need to double check'
-                        )
+        maybe_mup_init(self)
 
     def _build_tokenizer(self):
         self.tokenizer = get_nmt_tokenizer(
@@ -572,6 +532,16 @@ class MegatronRetrievalModel(MegatronBaseModel, TextGeneration):
     def setup_optimizer_param_groups(self):
         """ModelPT override. Optimizer will get self._optimizer_param_groups"""
         self._optimizer_param_groups = get_params_for_weight_decay_optimization([self.model])
+
+        if self.cfg.get('make_mup', False) and hasattr(self.cfg, 'shape_file'):
+            # muP parameter group processing
+            optim_name = self.cfg.optim.get('name', 'fused_adam')
+            self._optimizer_param_groups = process_mup_param_groups(
+                optim_name,
+                self._optimizer_param_groups,
+                lr=self.cfg.optim.lr,
+                weight_decay=self.cfg.optim.get('weight_decay', 0.0),
+            )
 
     def list_available_models(self):
         pass

@@ -268,7 +268,7 @@ def append_base_head_widths(path: str, base_model: nn.Module, module_selector_su
         if any(
                 name.endswith(suffix)
                 for suffix in module_selector_suffixes
-        ):
+        ) and hasattr(layer, 'hidden_size_per_attention_head'):
             base_head_widths[name] = layer.hidden_size_per_attention_head
 
     if base_head_widths:

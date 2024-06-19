@@ -47,7 +47,8 @@ def main(cfg) -> None:
     shrink_factor = cfg.model.get('mup_delta_shrink_factor', 1)
     assert (
         # Do all scalable widths have a specified value?
-        all(isinstance(elem, (list, tuple)) and len(elem) == 2 for elem in scalable_widths)
+        isinstance(scalable_widths, dict)
+        or all(isinstance(elem, (list, tuple)) and len(elem) == 2 for elem in scalable_widths)
         or shrink_factor != 1
     ), (
         '`model.mup_delta_shrink_factor` must be ≠1 if any scalable width does not have a specified value.'
@@ -68,7 +69,11 @@ def main(cfg) -> None:
     for elem in scalable_widths:
         need_delta_value = True
         # Get config key to set in `delta_model` config and optionally a specified value.
-        if isinstance(elem, str):
+        if isinstance(scalable_widths, dict):
+            cfg_key = elem
+            delta_value = scalable_widths[cfg_key]
+            need_delta_value = False
+        elif isinstance(elem, str):
             cfg_key = elem
         else:
             assert isinstance(elem, (list, tuple)) and 1 <= len(elem) <= 2

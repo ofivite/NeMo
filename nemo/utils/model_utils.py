@@ -661,13 +661,21 @@ def inject_model_parallel_rank(filepath, fsdp_sharded_ckpt=False):
     if app_state.model_parallel_size is not None and app_state.model_parallel_size > 1:
         fsdp_shard = f'_fsdp_shard_{app_state.data_parallel_rank:05d}' if fsdp_sharded_ckpt else ''
         if app_state.pipeline_model_parallel_size is None or app_state.pipeline_model_parallel_size == 1:
-            filepath = f'{dirname}/mp_rank_{app_state.tensor_model_parallel_rank:02d}{fsdp_shard}/{basename}'
+            filepath = os.path.join(
+                dirname,
+                f'mp_rank_{app_state.tensor_model_parallel_rank:02d}{fsdp_shard}',
+                basename,
+            )
         else:
-            filepath = f'{dirname}/tp_rank_{app_state.tensor_model_parallel_rank:02d}_pp_rank_{app_state.pipeline_model_parallel_rank:03d}/{basename}'
+            filepath = os.path.join(
+                dirname,
+                f'tp_rank_{app_state.tensor_model_parallel_rank:02d}_pp_rank_{app_state.pipeline_model_parallel_rank:03d}',
+                basename,
+            )
         return filepath
     else:
-        fsdp_shard = f'/fsdp_shard_{app_state.data_parallel_rank:05d}' if fsdp_sharded_ckpt else ''
-        return f'{dirname}{fsdp_shard}/{basename}'
+        fsdp_shard = f'fsdp_shard_{app_state.data_parallel_rank:05d}' if fsdp_sharded_ckpt else ''
+        return os.path.join(dirname, fsdp_shard, basename)
 
 
 def ckpt_to_dir(filepath: Union[str, Path]) -> Path:

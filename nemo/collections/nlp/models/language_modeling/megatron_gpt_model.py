@@ -49,7 +49,7 @@ from nemo.collections.nlp.models.language_modeling.megatron_base_model import Me
 from nemo.collections.nlp.modules.common.megatron.build_model import build_model
 from nemo.collections.nlp.modules.common.megatron.module import Float16Module
 from nemo.collections.nlp.modules.common.megatron.mup.convert import maybe_mup_init
-from nemo.collections.nlp.modules.common.megatron.mup.optim import process_mup_param_groups
+from nemo.collections.nlp.modules.common.megatron.mup.optim import is_adam_opt, process_mup_param_groups
 from nemo.collections.nlp.modules.common.megatron.utils import (
     ApexGuardDefaults,
     average_losses_across_data_parallel_group,
@@ -526,11 +526,16 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
         if self.cfg.get('make_mup', False) and hasattr(self.cfg, 'shape_file'):
             # muP parameter group processing
             optim_name = self.cfg.optim.get('name', 'fused_adam')
+            optim_kwargs = dict(
+                lr=self.cfg.optim.lr,
+                weight_decay=self.cfg.optim.get('weight_decay', 0.0),
+            )
+            if is_adam_opt(optim_name):
+                optim_kwargs['eps'] = self.cfg.optim.get('eps', 1e-8)
             self._optimizer_param_groups = process_mup_param_groups(
                 optim_name,
                 self._optimizer_param_groups,
-                lr=self.cfg.optim.lr,
-                weight_decay=self.cfg.optim.get('weight_decay', 0.0),
+                **optim_kwargs,
             )
 
     def setup_mcore_distributed_parallel(self):

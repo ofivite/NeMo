@@ -63,6 +63,16 @@ from collections import defaultdict
 from torch.optim import SGD, Adam, AdamW
 
 
+def is_adam_opt(optim_name):
+    return optim_name in [
+            'adam',
+            'adamw',
+            'fused_adam',
+            'distributed_fused_adam',
+            'megatron_fused_adam',
+    ]
+
+
 def process_param_groups(params, **kwargs):
     param_groups = list(params)
     if not isinstance(param_groups[0], dict):
@@ -72,17 +82,13 @@ def process_param_groups(params, **kwargs):
             param_group['lr'] = kwargs['lr']
         if 'weight_decay' not in param_group:
             param_group['weight_decay'] = kwargs.get('weight_decay', 0.0)
+        if 'eps' not in param_group and 'eps' in kwargs:
+            param_group['eps'] = kwargs['eps']
     return param_groups
 
 
 def process_mup_param_groups(optim_name, params, decoupled_wd=None, **kwargs):
-    if optim_name in [
-            'adam',
-            'adamw',
-            'fused_adam',
-            'distributed_fused_adam',
-            'megatron_fused_adam',
-    ]:
+    if is_adam_opt(optim_name):
         if decoupled_wd is None:
             decoupled_wd = optim_name != 'adam'
         param_groups = process_adam_param_groups(params, decoupled_wd=decoupled_wd, **kwargs)
@@ -124,6 +130,8 @@ def process_adam_param_groups(params, decoupled_wd=True, **kwargs):
             group['lr'] /= width_mult
             if not decoupled_wd:
                 group['weight_decay'] *= width_mult
+            if 'eps' in group:
+                group['eps'] /= width_mult
         new_param_groups.extend(list(matrix_like_p.values()) + [vector_like_p])
     return new_param_groups
 

@@ -2075,5 +2075,6 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
         # Unset query key layer scaling when using μP, because we manually fix up the norm factors.
         if transformer_config.apply_query_key_layer_scaling and self.cfg.get('make_mup', True):
             transformer_config.apply_query_key_layer_scaling = False
+            os.environ["NVTE_APPLY_QK_LAYER_SCALING"] = "0"
 
         return transformer_config

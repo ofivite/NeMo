@@ -228,3 +228,5 @@ model:
   mup_scalable_widths:  # Values to scale widths for. May be a dictionary or list of tuples pointing from layer name to desired delta value. Unspecified values will be scaled by `mup_delta_shrink_factor`.
     - hidden_size
     - ffn_hidden_size
+    # - num_attention_heads
+    # - num_query_groups

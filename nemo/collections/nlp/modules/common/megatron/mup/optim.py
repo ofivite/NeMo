@@ -84,7 +84,7 @@ def process_mup_param_groups(optim_name, params, decoupled_wd=None, **kwargs):
             'megatron_fused_adam',
     ]:
         if decoupled_wd is None:
-            decoupled_wd = True
+            decoupled_wd = optim_name != 'adam'
         param_groups = process_adam_param_groups(params, decoupled_wd=decoupled_wd, **kwargs)
     elif optim_name == 'sgd':
         if decoupled_wd is None:

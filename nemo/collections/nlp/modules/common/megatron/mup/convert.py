@@ -137,7 +137,7 @@ def maybe_mup_init(module):
             attn_norm_head_divisors = collections.defaultdict(lambda: attn_norm_head_divisor)
         else:
             # Here we don't use a `defaultdict` so that we get errors for missing values.
-            attn_norm_head_divisors = base_head_widths
+            attn_norm_head_divisors = {name: math.sqrt(head_width) for (name, head_width) in base_head_widths.items()}
 
         for name, layer in self.named_modules():
             if (

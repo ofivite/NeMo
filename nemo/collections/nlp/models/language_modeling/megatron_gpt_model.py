@@ -529,6 +529,7 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
             optim_kwargs = dict(
                 lr=self.cfg.optim.lr,
                 weight_decay=self.cfg.optim.get('weight_decay', 0.0),
+                decoupled_wd=self.cfg.optim.get('adam_w_mode', None),
             )
             if is_adam_opt(optim_name):
                 optim_kwargs['eps'] = self.cfg.optim.get('eps', 1e-8)

@@ -223,6 +223,7 @@ model:
     name: fused_adam
     lr: ???
     eps: ???
+    adam_w_mode: ???
     weight_decay: ???
     betas: 
     - 0.9

@@ -241,7 +241,7 @@ model:
   mup_query_zero_init: False  # Whether to initialize query projection layers with zeros for μTransfer stability.
   mup_readout_zero_init: False  # Whether to initialize output projection layers ("unembeddings") with zeros for μTransfer stability.
   mup_delta_shrink_factor: 8  # Factor by which to shrink `mup_scalable_widths` configs that do not have a specified value (using floor division).
-  mup_base_model_head_width: null  # Head width of the base model, for backward compatibility purposes regarding the attention norm factor. Can be an integer to use the same width for all layers, or null for automatic loading of the values if possible.
+  mup_base_model_head_width: ???  # Head width of the base model, for backward compatibility purposes regarding the attention norm factor. Can be an integer to use the same width for all layers, or null for automatic loading of the values if possible.
   mup_scalable_widths:  # Values to scale widths for. May be a dictionary or list of tuples pointing from layer name to desired delta value. Unspecified values will be scaled by `mup_delta_shrink_factor`.
     - hidden_size
     - ffn_hidden_size

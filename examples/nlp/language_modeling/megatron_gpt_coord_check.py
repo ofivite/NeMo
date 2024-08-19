@@ -107,6 +107,10 @@ def main(cfg) -> None:
             break
         shrink_factors.append(shrink_factor)
     df = []
+    assert len(shrink_factors) > 1, (
+        'cannot perform coordinate check with just one width. '
+        'Please increase base scalable widths to make sure they can be divided by powers of two > 1.'
+    )
 
     for shrink_factor in shrink_factors:
         # `set_base_shapes` returns the model

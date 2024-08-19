@@ -2,62 +2,75 @@ name: megatron_llama
 restore_from_path: null # used when starting from a .nemo file
 
 trainer:
-  devices: 1
-  num_nodes: 1
+  devices: ???
+  num_nodes: ???
   accelerator: gpu
-  precision: 32
+  precision: ???
   logger: False # logger provided by exp_manager
   enable_checkpointing: False
   use_distributed_sampler: False
   max_epochs: -1 # PTL default. In practice, max_steps will be reached first. 
-  max_steps: 100000 # consumed_samples = global_step * micro_batch_size * data_parallel_size * accumulate_grad_batches
-  log_every_n_steps: 10
-  val_check_interval: 100
-  limit_val_batches: 50
-  limit_test_batches: 500
+  max_steps: ??? # consumed_samples = global_step * micro_batch_size * data_parallel_size * accumulate_grad_batches
+  log_every_n_steps: ???
+  val_check_interval: ???
+  limit_val_batches: 10 # also set in sbatch script
+  limit_test_batches: 100 # also set in sbatch script
   accumulate_grad_batches: 1 # do not modify, grad acc is automatic for training megatron models
   gradient_clip_val: 1.0
   benchmark: False
-  enable_model_summary: False # default PTL callback for this does not support model parallelism, instead we log manually
+  enable_model_summary: True # default PTL callback for this does not support model parallelism, instead we log manually
 
 exp_manager:
   explicit_log_dir: null
   exp_dir: null
-  name: megatron_llama
+  name: ???
   create_wandb_logger: False
   wandb_logger_kwargs:
     project: null
     name: null
+  create_mlflow_logger: True
+  mlflow_logger_kwargs:
+      experiment_name: ???
+      run_name: ???
+      save_dir: None
+      prefix: ''
+      artifact_location: None
+      # # provide run_id if resuming a previously started run
+      # run_id: Optional[str] = None
+      # # tags:
+      #     <Any key:value pairs>
   resume_if_exists: True
   resume_ignore_no_checkpoint: True
   create_checkpoint_callback: True
   checkpoint_callback_params:
     monitor: val_loss
-    save_top_k: 10
+    save_top_k: ???
     mode: min
+    every_n_epochs: null
+    every_n_train_steps: ???
     always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
     save_nemo_on_train_end: False # not recommended when training large models on clusters with short time limits
-    filename: 'megatron_gpt--{val_loss:.2f}-{step}-{consumed_samples}'
+    filename: 'megatron_llama--{val_loss:.2f}-{step}-{consumed_samples}'
     model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}
 
 model:
   mcore_gpt: True
   # specify micro_batch_size, global_batch_size, and model parallelism
   # gradient accumulation will be done automatically based on data_parallel_size
-  micro_batch_size: 4 # limited by GPU memory
-  global_batch_size: 8 # will use more micro batches to reach global batch size
-  tensor_model_parallel_size: 1 # intra-layer model parallelism
-  pipeline_model_parallel_size: 1 # inter-layer model parallelism
+  micro_batch_size: ??? # limited by GPU memory
+  global_batch_size: ??? # will use more micro batches to reach global batch size
+  tensor_model_parallel_size: ??? # intra-layer model parallelism
+  pipeline_model_parallel_size: ??? # inter-layer model parallelism
   virtual_pipeline_model_parallel_size: null # interleaved pipeline
 
   # model architecture
-  encoder_seq_length: 4096
+  encoder_seq_length: ???
   max_position_embeddings: ${.encoder_seq_length}
-  num_layers: 32 # 7b: 32 | 13b: 40 | 70b: 80
-  hidden_size: 4096 # 7b: 4096 | 13b: 5120 | 70b: 8192
-  ffn_hidden_size: 11008 # Transformer FFN hidden size. Usually 4 * hidden_size. | 7b: 11008 | 13b: 13824 | 70b: 28672
-  num_attention_heads: 32 # 7b: 32 | 13b: 40 | 70b: 64
-  init_method_std: 0.02 # Standard deviation of the zero mean normal distribution used for weight initialization.')
+  num_layers: ??? # 7b: 32 | 13b: 40 | 70b: 80
+  hidden_size: ??? # 7b: 4096 | 13b: 5120 | 70b: 8192
+  ffn_hidden_size: ??? # Transformer FFN hidden size. Usually 4 * hidden_size. | 7b: 11008 | 13b: 13824 | 70b: 28672
+  num_attention_heads: ??? # 7b: 32 | 13b: 40 | 70b: 64
+  init_method_std: ??? # Standard deviation of the zero mean normal distribution used for weight initialization.')
   use_scaled_init_method: True # use scaled residuals initialization
   hidden_dropout: 0.0 # Dropout probability for hidden state transformer.
   attention_dropout: 0.0 # Dropout probability for attention
@@ -83,7 +96,7 @@ model:
   share_embeddings_and_output_weights: False # Share embedding and output layer weights.
   overlap_p2p_comm: False # Overlap p2p communication with computes. This argument is valid only when `virtual_pipeline_model_parallel_size` is larger than 1
   batch_p2p_comm: True # Batch consecutive inter-peer send/recv operations. This argument is valid only when `virtual_pipeline_model_parallel_size` is larger than 1
-  num_query_groups: 32 # Number of query groups for group query attention. If None, normal attention is used. | 7b: 32 | 13b: 40 | 70b: 8
+  num_query_groups: ??? # Number of query groups for group query attention. If None, normal attention is used. | 7b: 32 | 13b: 40 | 70b: 8
 
   tokenizer:
     library: 'sentencepiece'
@@ -116,7 +129,7 @@ model:
 
 
   # Miscellaneous
-  seed: 1234
+  seed: ???
   resume_from_checkpoint: null # manually set the checkpoint file to load from
   use_cpu_initialization: False # Init weights on the CPU (slow for large models)
   onnx_safe: False # Use work-arounds for known problems with Torch ONNX exporter.
@@ -188,7 +201,7 @@ model:
     splits_string: 900,50,50
     seq_length: ${model.encoder_seq_length}
     skip_warmup: True
-    num_workers: 2
+    num_workers: ???
     dataloader_type: single # cyclic
     reset_position_ids: False # Reset position ids after end-of-document token
     reset_attention_mask: False # Reset attention mask after end-of-document token
@@ -208,23 +221,27 @@ model:
   
   optim:
     name: fused_adam
-    lr: 2e-4
-    weight_decay: 0.01 
+    lr: ???
+    eps: ???
+    adam_w_mode: ???
+    weight_decay: ???
     betas: 
     - 0.9
     - 0.98
     sched:
-      name: CosineAnnealing
-      warmup_steps: 500
-      constant_steps: 50000
-      min_lr: 2e-5
+      name: PolynomialHoldDecayAnnealing
+      power: 1.0
+      warmup_steps: ???
+      hold_steps: ???
+      max_steps: ???
+      min_lr: ???
 
   shape_file: null  # File to save μP base shapes in.
   make_mup: True
   mup_query_zero_init: False  # Whether to initialize query projection layers with zeros for μTransfer stability.
   mup_readout_zero_init: False  # Whether to initialize output projection layers ("unembeddings") with zeros for μTransfer stability.
   mup_delta_shrink_factor: 8  # Factor by which to shrink `mup_scalable_widths` configs that do not have a specified value (using floor division).
-  mup_base_model_head_width: null  # Head width of the base model, for backward compatibility purposes regarding the attention norm factor. Can be an integer to use the same width for all layers, or null for automatic loading of the values if possible.
+  mup_base_model_head_width: ???  # Head width of the base model, for backward compatibility purposes regarding the attention norm factor. Can be an integer to use the same width for all layers, or null for automatic loading of the values if possible.
   mup_scalable_widths:  # Values to scale widths for. May be a dictionary or list of tuples pointing from layer name to desired delta value. Unspecified values will be scaled by `mup_delta_shrink_factor`.
     - hidden_size
     - ffn_hidden_size

@@ -601,6 +601,7 @@ class NLPFSDPStrategy(FSDPStrategy):
             'full': ShardingStrategy.FULL_SHARD,
             'hybrid': ShardingStrategy.HYBRID_SHARD,
             'grad': ShardingStrategy.SHARD_GRAD_OP,
+            'no_shard': ShardingStrategy.NO_SHARD,
         }
         assert sharding_strategy in list(fsdp_sharding_strategy.keys()), "Not a supported sharding strategy."
         assert sharding_strategy != 'hybrid', "Hybrid sharding is currrently not supported."
